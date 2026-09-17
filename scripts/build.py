@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the inspectable release artifact and its checksum manifest."""
+"""Build a byte-for-byte deterministic release artifact and checksum."""
 
 from __future__ import annotations
 
@@ -22,14 +22,34 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def add_deterministic(archive: tarfile.TarFile, path: Path, arcname: str) -> None:
+    """Add a path with normalized archive metadata so repeated builds match."""
+    if path.is_dir():
+        info = archive.gettarinfo(str(path), arcname=arcname)
+        info.mtime = 0
+        info.uid = info.gid = 0
+        info.uname = info.gname = ""
+        archive.addfile(info)
+        for child in sorted(path.iterdir(), key=lambda item: item.name):
+            add_deterministic(archive, child, f"{arcname}/{child.name}")
+        return
+
+    info = archive.gettarinfo(str(path), arcname=arcname)
+    info.mtime = 0
+    info.uid = info.gid = 0
+    info.uname = info.gname = ""
+    with path.open("rb") as stream:
+        archive.addfile(info, stream)
+
+
 def main() -> None:
     DIST.mkdir(exist_ok=True)
     if ARTIFACT.exists():
         ARTIFACT.unlink()
 
-    with tarfile.open(ARTIFACT, "w:gz") as archive:
+    with tarfile.open(ARTIFACT, "w:gz", compresslevel=9, format=tarfile.PAX_FORMAT) as archive:
         for relative in INCLUDE:
-            archive.add(ROOT / relative, arcname=relative)
+            add_deterministic(archive, ROOT / relative, relative)
 
     digest = sha256(ARTIFACT)
     checksum = DIST / f"{ARTIFACT.name}.sha256"
