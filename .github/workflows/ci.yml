@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  release-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Syntax gate
+        run: python -m compileall -q src tests scripts
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Build release artifact
+        run: python scripts/build.py
+
+      - name: Start release candidate
+        shell: bash
+        run: |
+          python src/service.py --port 8080 >server.log 2>&1 &
+          echo $! > server.pid
+
+      - name: Verify release candidate
+        run: python scripts/verify_release.py --artifact dist/release-verification-lab-0.1.0.tar.gz --base-url http://127.0.0.1:8080
+
+      - name: Stop release candidate
+        if: always()
+        shell: bash
+        run: |
+          if [ -f server.pid ]; then kill "$(cat server.pid)" 2>/dev/null || true; fi
+          if [ -f server.log ]; then cat server.log; fi
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-verification-lab-0.1.0
+          path: |
+            dist/release-verification-lab-0.1.0.tar.gz
+            dist/release-verification-lab-0.1.0.tar.gz.sha256
