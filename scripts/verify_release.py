@@ -6,9 +6,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+
+EXPECTED_HEALTH = {"status": "ok", "service": "release-verification-lab"}
 
 
 def sha256(path: Path) -> str:
@@ -28,7 +32,7 @@ def expected_digest(artifact: Path) -> str:
     return digest
 
 
-def verify_runtime(base_url: str) -> None:
+def fetch_health(base_url: str) -> dict[str, object]:
     request = urllib.request.Request(
         f"{base_url.rstrip('/')}/healthz",
         headers={"Accept": "application/json"},
@@ -36,11 +40,24 @@ def verify_runtime(base_url: str) -> None:
     with urllib.request.urlopen(request, timeout=5) as response:
         if response.status != 200:
             raise RuntimeError(f"health check returned HTTP {response.status}")
-        payload = json.loads(response.read().decode("utf-8"))
+        return json.loads(response.read().decode("utf-8"))
 
-    expected = {"status": "ok", "service": "release-verification-lab"}
-    if payload != expected:
-        raise RuntimeError(f"unexpected health payload: {payload!r}")
+
+def verify_runtime(base_url: str, attempts: int = 10, delay_seconds: float = 0.5) -> None:
+    """Retry briefly to absorb normal process-startup races, then fail closed."""
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            payload = fetch_health(base_url)
+            if payload != EXPECTED_HEALTH:
+                raise RuntimeError(f"unexpected health payload: {payload!r}")
+            return
+        except (OSError, ValueError, RuntimeError, urllib.error.URLError) as exc:
+            last_error = exc
+            if attempt < attempts:
+                time.sleep(delay_seconds)
+
+    raise RuntimeError(f"runtime health check did not pass after {attempts} attempts: {last_error}")
 
 
 def main() -> None:
