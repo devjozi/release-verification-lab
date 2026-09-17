@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import tarfile
 from pathlib import Path
@@ -47,9 +48,11 @@ def main() -> None:
     if ARTIFACT.exists():
         ARTIFACT.unlink()
 
-    with tarfile.open(ARTIFACT, "w:gz", compresslevel=9, format=tarfile.PAX_FORMAT) as archive:
-        for relative in INCLUDE:
-            add_deterministic(archive, ROOT / relative, relative)
+    with ARTIFACT.open("wb") as output:
+        with gzip.GzipFile(fileobj=output, mode="wb", compresslevel=9, mtime=0) as compressed:
+            with tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as archive:
+                for relative in INCLUDE:
+                    add_deterministic(archive, ROOT / relative, relative)
 
     digest = sha256(ARTIFACT)
     checksum = DIST / f"{ARTIFACT.name}.sha256"
